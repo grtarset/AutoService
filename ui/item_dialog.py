@@ -15,6 +15,9 @@ class ItemDialog(QDialog):
         super().__init__()
 
         self.setWindowTitle(title)
+        
+        # Встановлюємо комфортну ширину (600 пікселів) та висоту (180 пікселів)
+        self.resize(600, 180) 
 
         layout = QVBoxLayout(self)
 

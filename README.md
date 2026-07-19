@@ -11,3 +11,5 @@
 - Excel
 - SQLite
 - Пошук запчастин
+
+python -m PyInstaller --noconsole --name="AutoService" --add-data "database;database" --add-data "fonts;fonts" main.py
