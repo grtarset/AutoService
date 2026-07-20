@@ -1,12 +1,11 @@
 import sys
 
-from PySide6.QtWidgets import QApplication
-
+from app import AutoServiceApp
 from ui.main_window import MainWindow
 
 
 def main():
-    app = QApplication(sys.argv)
+    app = AutoServiceApp(sys.argv)
 
     window = MainWindow()
     window.show()

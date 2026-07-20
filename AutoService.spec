@@ -5,7 +5,7 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[('database', 'database'), ('fonts', 'fonts')],
+    datas=[('database', 'database'), ('fonts', 'fonts'), ('assets', 'assets')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
@@ -32,6 +32,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon=['assets\\logo.ico'],
 )
 coll = COLLECT(
     exe,
