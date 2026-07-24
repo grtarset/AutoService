@@ -4,6 +4,8 @@ from pathlib import Path
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
+from ui.theme import apply_modern_theme
+
 
 def resource_path(*parts) -> Path:
     bundle_root = getattr(sys, "_MEIPASS", None)
@@ -26,3 +28,4 @@ class AutoServiceApp(QApplication):
         self.setApplicationName("AutoService")
         self.setOrganizationName("grtarset")
         self.setWindowIcon(app_icon())
+        apply_modern_theme(self)

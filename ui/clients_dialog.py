@@ -3,9 +3,11 @@ from PySide6.QtWidgets import (
     QDialog,
     QHBoxLayout,
     QHeaderView,
+    QLabel,
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QStyle,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -13,6 +15,7 @@ from PySide6.QtWidgets import (
 
 from database.db_manager import delete_client, get_client_card, get_clients
 from ui.client_card_dialog import ClientCardDialog
+from ui.theme import polish_table, set_button_icon, set_button_role, set_variant
 
 
 class ClientsDialog(QDialog):
@@ -21,14 +24,23 @@ class ClientsDialog(QDialog):
         self.selected_record = None
 
         self.setWindowTitle("Журнал клієнтів")
-        self.resize(980, 560)
+        self.resize(1040, 620)
 
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(14)
+
+        title_label = QLabel("Журнал клієнтів")
+        set_variant(title_label, "section")
+        layout.addWidget(title_label)
 
         search_layout = QHBoxLayout()
+        search_layout.setSpacing(10)
         self.searchEdit = QLineEdit()
         self.searchEdit.setPlaceholderText("Пошук: клієнт, телефон, авто, VIN або держномер")
         self.clearSearchButton = QPushButton("Очистити")
+        set_button_role(self.clearSearchButton, "subtle")
+        set_button_icon(self.clearSearchButton, QStyle.StandardPixmap.SP_DialogResetButton)
         search_layout.addWidget(self.searchEdit, 1)
         search_layout.addWidget(self.clearSearchButton)
         layout.addLayout(search_layout)
@@ -46,16 +58,27 @@ class ClientsDialog(QDialog):
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
-        self.table.verticalHeader().setVisible(False)
+        polish_table(self.table)
         self.setup_headers()
         layout.addWidget(self.table)
 
         buttons = QHBoxLayout()
+        buttons.setSpacing(10)
         self.newButton = QPushButton("Новий клієнт")
         self.editButton = QPushButton("Редагувати картку")
         self.deleteButton = QPushButton("Видалити")
         self.selectButton = QPushButton("Обрати для акту")
         self.closeButton = QPushButton("Закрити")
+        set_button_role(self.newButton, "subtle")
+        set_button_role(self.editButton, "subtle")
+        set_button_role(self.deleteButton, "danger")
+        set_button_role(self.selectButton, "primary")
+        set_button_role(self.closeButton, "subtle")
+        set_button_icon(self.newButton, QStyle.StandardPixmap.SP_FileDialogNewFolder)
+        set_button_icon(self.editButton, QStyle.StandardPixmap.SP_DialogOpenButton)
+        set_button_icon(self.deleteButton, QStyle.StandardPixmap.SP_TrashIcon)
+        set_button_icon(self.selectButton, QStyle.StandardPixmap.SP_DialogApplyButton)
+        set_button_icon(self.closeButton, QStyle.StandardPixmap.SP_DialogCloseButton)
         buttons.addWidget(self.newButton)
         buttons.addWidget(self.editButton)
         buttons.addWidget(self.deleteButton)

@@ -3,11 +3,14 @@ import re
 from pathlib import Path
 
 from PySide6.QtCore import QDate, Qt
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
     QDateEdit,
-    QFormLayout,
+    QDoubleSpinBox,
+    QFrame,
+    QGridLayout,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -15,18 +18,31 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QSizePolicy,
+    QScrollArea,
+    QStyle,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
-from app import app_icon
+from app import app_icon, resource_path
 from database.db_manager import get_invoice_by_id, save_invoice, search_customer_records
+from models.discounts import (
+    DISCOUNT_AMOUNT,
+    DISCOUNT_NONE,
+    DISCOUNT_PERCENT,
+    calculate_invoice_totals,
+    format_discount,
+    normalize_discount_type,
+    prepare_item,
+)
 from reports.pdf_export import export_invoice
 from ui.clients_dialog import ClientsDialog
 from ui.history_dialog import HistoryDialog
 from ui.item_dialog import ItemDialog
+from ui.theme import polish_table, set_button_icon, set_button_role, set_surface, set_variant
 
 
 class MainWindow(QMainWindow):
@@ -40,43 +56,107 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle("AutoService — Акти виконаних робіт")
         self.setWindowIcon(app_icon())
-        self.resize(1080, 790)
+        self.resize(1180, 980)
+        self.setMinimumSize(980, 760)
 
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        self.setCentralWidget(scroll_area)
         central_widget = QWidget()
-        self.setCentralWidget(central_widget)
+        scroll_area.setWidget(central_widget)
 
         main_layout = QVBoxLayout(central_widget)
         main_layout.setSpacing(12)
-        main_layout.setContentsMargins(15, 15, 15, 15)
+        main_layout.setContentsMargins(20, 16, 20, 16)
 
-        lookup_title = QLabel("<b>Пошук клієнта або автомобіля</b>")
-        lookup_title.setStyleSheet("font-size: 11pt; color: #2b4c7e;")
-        main_layout.addWidget(lookup_title)
+        header_layout = QHBoxLayout()
+        header_layout.setSpacing(12)
+        logo_label = QLabel()
+        logo_label.setFixedSize(46, 46)
+        logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        logo_pixmap = QPixmap(str(resource_path("assets", "logo.png")))
+        if not logo_pixmap.isNull():
+            logo_label.setPixmap(
+                logo_pixmap.scaled(
+                    42,
+                    42,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+            )
+
+        title_layout = QVBoxLayout()
+        title_layout.setSpacing(1)
+        title_label = QLabel("AutoService")
+        set_variant(title_label, "title")
+        subtitle_label = QLabel("Акти виконаних робіт, клієнти та історія сервісу")
+        set_variant(subtitle_label, "subtitle")
+        title_layout.addWidget(title_label)
+        title_layout.addWidget(subtitle_label)
+        header_layout.addWidget(logo_label)
+        header_layout.addLayout(title_layout)
+        header_layout.addStretch()
+        main_layout.addLayout(header_layout)
+
+        lookup_panel = QFrame()
+        set_surface(lookup_panel)
+        lookup_panel_layout = QVBoxLayout(lookup_panel)
+        lookup_panel_layout.setSpacing(10)
+        lookup_panel_layout.setContentsMargins(16, 14, 16, 14)
+
+        lookup_title = QLabel("Пошук клієнта або автомобіля")
+        set_variant(lookup_title, "section")
+        lookup_panel_layout.addWidget(lookup_title)
 
         lookup_layout = QHBoxLayout()
+        lookup_layout.setSpacing(10)
         self.lookupEdit = QLineEdit()
         self.lookupEdit.setPlaceholderText("ПІБ, телефон, VIN або держномер")
         self.lookupButton = QPushButton("Знайти")
+        set_button_role(self.lookupButton, "primary")
+        set_button_icon(self.lookupButton, QStyle.StandardPixmap.SP_FileDialogContentsView)
         lookup_layout.addWidget(self.lookupEdit, 2)
         lookup_layout.addWidget(self.lookupButton)
-        main_layout.addLayout(lookup_layout)
+        lookup_panel_layout.addLayout(lookup_layout)
 
         lookup_result_layout = QHBoxLayout()
+        lookup_result_layout.setSpacing(10)
         self.lookupCombo = QComboBox()
         self.lookupCombo.setMinimumWidth(520)
+        self.lookupCombo.setMinimumHeight(32)
         self.applyLookupButton = QPushButton("Обрати")
+        set_button_role(self.applyLookupButton, "success")
+        set_button_icon(self.applyLookupButton, QStyle.StandardPixmap.SP_DialogApplyButton)
         self.clearCustomerButton = QPushButton("Очистити вибір")
+        set_button_role(self.clearCustomerButton, "subtle")
+        set_button_icon(self.clearCustomerButton, QStyle.StandardPixmap.SP_DialogResetButton)
         lookup_result_layout.addWidget(self.lookupCombo, 1)
         lookup_result_layout.addWidget(self.applyLookupButton)
         lookup_result_layout.addWidget(self.clearCustomerButton)
-        main_layout.addLayout(lookup_result_layout)
+        lookup_panel_layout.addLayout(lookup_result_layout)
 
         self.selectedCustomerLabel = QLabel("Новий клієнт / автомобіль")
-        self.selectedCustomerLabel.setStyleSheet("color: #64748b;")
-        main_layout.addWidget(self.selectedCustomerLabel)
+        set_variant(self.selectedCustomerLabel, "muted")
+        lookup_panel_layout.addWidget(self.selectedCustomerLabel)
+        main_layout.addWidget(lookup_panel)
 
-        form_layout = QFormLayout()
-        form_layout.setSpacing(8)
+        details_panel = QFrame()
+        set_surface(details_panel)
+        details_panel.setMinimumHeight(168)
+        details_layout = QVBoxLayout(details_panel)
+        details_layout.setSpacing(12)
+        details_layout.setContentsMargins(16, 14, 16, 14)
+
+        details_title = QLabel("Дані акту")
+        set_variant(details_title, "section")
+        details_layout.addWidget(details_title)
+
+        form_grid = QGridLayout()
+        form_grid.setHorizontalSpacing(18)
+        form_grid.setVerticalSpacing(9)
+        form_grid.setColumnStretch(1, 1)
+        form_grid.setColumnStretch(3, 1)
 
         self.dateEdit = QDateEdit()
         self.dateEdit.setCalendarPopup(True)
@@ -87,76 +167,161 @@ class MainWindow(QMainWindow):
         self.phoneEdit = QLineEdit()
         self.phoneEdit.setPlaceholderText("+380...")
         self.brandEdit = QLineEdit()
+        self.brandEdit.setPlaceholderText("Наприклад: BMW")
         self.modelEdit = QLineEdit()
+        self.modelEdit.setPlaceholderText("Наприклад: X5")
         self.vinEdit = QLineEdit()
+        self.vinEdit.setPlaceholderText("VIN-код")
         self.numberEdit = QLineEdit()
+        self.numberEdit.setPlaceholderText("Наприклад: AA1234AA")
         self.mileageEdit = QLineEdit()
+        self.mileageEdit.setPlaceholderText("Наприклад: 185000")
 
-        form_layout.addRow("Дата:", self.dateEdit)
-        form_layout.addRow("ПІБ клієнта:", self.clientEdit)
-        form_layout.addRow("Телефон:", self.phoneEdit)
-        form_layout.addRow("Марка авто:", self.brandEdit)
-        form_layout.addRow("Модель авто:", self.modelEdit)
-        form_layout.addRow("VIN-код:", self.vinEdit)
-        form_layout.addRow("Держномер:", self.numberEdit)
-        form_layout.addRow("Пробіг (км):", self.mileageEdit)
-        main_layout.addLayout(form_layout)
+        form_fields = (
+            self.dateEdit,
+            self.clientEdit,
+            self.phoneEdit,
+            self.brandEdit,
+            self.modelEdit,
+            self.vinEdit,
+            self.numberEdit,
+            self.mileageEdit,
+        )
+        for field in form_fields:
+            field.setMinimumHeight(32)
+            field.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
-        lbl_materials = QLabel("<b>Використані матеріали та запчастини</b>")
-        lbl_materials.setStyleSheet("font-size: 11pt; color: #2b4c7e;")
-        main_layout.addWidget(lbl_materials)
+        detail_rows = (
+            ("Дата:", self.dateEdit, "Марка авто:", self.brandEdit),
+            ("ПІБ клієнта:", self.clientEdit, "Модель авто:", self.modelEdit),
+            ("Телефон:", self.phoneEdit, "VIN-код:", self.vinEdit),
+            ("Пробіг (км):", self.mileageEdit, "Держномер:", self.numberEdit),
+        )
+        for row, (left_label, left_widget, right_label, right_widget) in enumerate(detail_rows):
+            left = QLabel(left_label)
+            right = QLabel(right_label)
+            left.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            right.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            form_grid.addWidget(left, row, 0)
+            form_grid.addWidget(left_widget, row, 1)
+            form_grid.addWidget(right, row, 2)
+            form_grid.addWidget(right_widget, row, 3)
+        details_layout.addLayout(form_grid)
+        main_layout.addWidget(details_panel)
 
-        self.materialsTable = QTableWidget(0, 4)
-        self.materialsTable.setHorizontalHeaderLabels(["Назва", "Кількість", "Ціна", "Сума"])
+        materials_panel = QFrame()
+        set_surface(materials_panel)
+        materials_layout = QVBoxLayout(materials_panel)
+        materials_layout.setSpacing(10)
+        materials_layout.setContentsMargins(16, 14, 16, 14)
+
+        materials_header = QHBoxLayout()
+        lbl_materials = QLabel("Матеріали та запчастини")
+        set_variant(lbl_materials, "section")
+        self.addMaterialButton = QPushButton("Додати матеріал")
+        set_button_role(self.addMaterialButton, "subtle")
+        set_button_icon(self.addMaterialButton, QStyle.StandardPixmap.SP_FileDialogNewFolder)
+        materials_header.addWidget(lbl_materials)
+        materials_header.addStretch()
+        materials_header.addWidget(self.addMaterialButton)
+        materials_layout.addLayout(materials_header)
+
+        self.materialsTable = QTableWidget(0, 5)
+        self.materialsTable.setHorizontalHeaderLabels(["Назва", "Кількість", "Ціна", "Знижка", "Сума"])
         self.materialsTable.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.materialsTable.setSelectionBehavior(QAbstractItemView.SelectRows)
+        polish_table(self.materialsTable)
+        self.materialsTable.setMinimumHeight(118)
         self.setup_table_headers(self.materialsTable)
-        main_layout.addWidget(self.materialsTable)
+        materials_layout.addWidget(self.materialsTable)
+        (
+            materials_discount_layout,
+            self.materialsDiscountTypeCombo,
+            self.materialsDiscountValueSpin,
+        ) = self.create_discount_controls("Знижка на матеріали")
+        materials_layout.addLayout(materials_discount_layout)
+        main_layout.addWidget(materials_panel, 1)
 
-        btn_mat_layout = QHBoxLayout()
-        self.addMaterialButton = QPushButton("➕ Додати матеріал")
-        btn_mat_layout.addWidget(self.addMaterialButton)
-        btn_mat_layout.addStretch()
-        main_layout.addLayout(btn_mat_layout)
+        works_panel = QFrame()
+        set_surface(works_panel)
+        works_layout = QVBoxLayout(works_panel)
+        works_layout.setSpacing(10)
+        works_layout.setContentsMargins(16, 14, 16, 14)
 
-        lbl_works = QLabel("<b>Виконані послуги та роботи</b>")
-        lbl_works.setStyleSheet("font-size: 11pt; color: #2b4c7e;")
-        main_layout.addWidget(lbl_works)
+        works_header = QHBoxLayout()
+        lbl_works = QLabel("Послуги та роботи")
+        set_variant(lbl_works, "section")
+        self.addWorkButton = QPushButton("Додати послугу")
+        set_button_role(self.addWorkButton, "subtle")
+        set_button_icon(self.addWorkButton, QStyle.StandardPixmap.SP_FileDialogNewFolder)
+        works_header.addWidget(lbl_works)
+        works_header.addStretch()
+        works_header.addWidget(self.addWorkButton)
+        works_layout.addLayout(works_header)
 
-        self.worksTable = QTableWidget(0, 4)
-        self.worksTable.setHorizontalHeaderLabels(["Назва", "Кількість", "Ціна", "Сума"])
+        self.worksTable = QTableWidget(0, 5)
+        self.worksTable.setHorizontalHeaderLabels(["Назва", "Кількість", "Ціна", "Знижка", "Сума"])
         self.worksTable.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.worksTable.setSelectionBehavior(QAbstractItemView.SelectRows)
+        polish_table(self.worksTable)
+        self.worksTable.setMinimumHeight(118)
         self.setup_table_headers(self.worksTable)
-        main_layout.addWidget(self.worksTable)
+        works_layout.addWidget(self.worksTable)
+        (
+            works_discount_layout,
+            self.worksDiscountTypeCombo,
+            self.worksDiscountValueSpin,
+        ) = self.create_discount_controls("Знижка на послуги")
+        works_layout.addLayout(works_discount_layout)
+        main_layout.addWidget(works_panel, 1)
 
-        btn_work_layout = QHBoxLayout()
-        self.addWorkButton = QPushButton("➕ Додати послугу")
-        btn_work_layout.addWidget(self.addWorkButton)
-        btn_work_layout.addStretch()
-        main_layout.addLayout(btn_work_layout)
+        footer_panel = QFrame()
+        set_surface(footer_panel)
+        footer_layout = QVBoxLayout(footer_panel)
+        footer_layout.setSpacing(12)
+        footer_layout.setContentsMargins(16, 14, 16, 14)
 
-        summary_layout = QVBoxLayout()
-        summary_layout.setSpacing(5)
-        summary_layout.setContentsMargins(0, 10, 0, 10)
+        (
+            invoice_discount_layout,
+            self.invoiceDiscountTypeCombo,
+            self.invoiceDiscountValueSpin,
+        ) = self.create_discount_controls("Загальна знижка на акт")
+        footer_layout.addLayout(invoice_discount_layout)
+
+        summary_layout = QHBoxLayout()
+        summary_layout.setSpacing(16)
 
         self.materialsTotal = QLabel("Матеріали: 0.00 грн")
         self.worksTotal = QLabel("Послуги: 0.00 грн")
-        self.totalLabel = QLabel("<b>РАЗОМ ДО ОПЛАТИ: 0.00 грн</b>")
-        self.totalLabel.setStyleSheet("font-size: 13pt; color: #1e293b; padding-top: 5px;")
+        self.discountTotal = QLabel("Знижки: 0.00 грн")
+        self.totalLabel = QLabel("РАЗОМ ДО ОПЛАТИ: 0.00 грн")
+        set_variant(self.materialsTotal, "muted")
+        set_variant(self.worksTotal, "muted")
+        set_variant(self.discountTotal, "muted")
+        set_variant(self.totalLabel, "summary")
 
         summary_layout.addWidget(self.materialsTotal)
         summary_layout.addWidget(self.worksTotal)
+        summary_layout.addWidget(self.discountTotal)
+        summary_layout.addStretch()
         summary_layout.addWidget(self.totalLabel)
-        main_layout.addLayout(summary_layout)
+        footer_layout.addLayout(summary_layout)
 
         action_buttons = QHBoxLayout()
-        self.btn_new = QPushButton("🆕 Новий акт")
-        self.btn_clients = QPushButton("👥 Журнал клієнтів")
-        self.btn_history = QPushButton("🗂️ Журнал актів")
-        self.btn_save = QPushButton("💾 Зберегти")
-        self.pdfButton = QPushButton("📄 Сформувати акт у PDF")
-        self.pdfButton.setStyleSheet("font-weight: bold; padding: 6px 15px;")
+        action_buttons.setSpacing(10)
+        self.btn_new = QPushButton("Новий акт")
+        self.btn_clients = QPushButton("Клієнти")
+        self.btn_history = QPushButton("Журнал актів")
+        self.btn_save = QPushButton("Зберегти")
+        self.pdfButton = QPushButton("Сформувати PDF")
+        set_button_role(self.btn_new, "subtle")
+        set_button_role(self.btn_clients, "subtle")
+        set_button_role(self.btn_history, "subtle")
+        set_button_role(self.btn_save, "success")
+        set_button_role(self.pdfButton, "primary")
+        set_button_icon(self.btn_new, QStyle.StandardPixmap.SP_FileDialogNewFolder)
+        set_button_icon(self.btn_clients, QStyle.StandardPixmap.SP_DirIcon)
+        set_button_icon(self.btn_history, QStyle.StandardPixmap.SP_FileDialogDetailedView)
+        set_button_icon(self.btn_save, QStyle.StandardPixmap.SP_DialogSaveButton)
+        set_button_icon(self.pdfButton, QStyle.StandardPixmap.SP_FileIcon)
 
         action_buttons.addWidget(self.btn_new)
         action_buttons.addWidget(self.btn_clients)
@@ -164,7 +329,8 @@ class MainWindow(QMainWindow):
         action_buttons.addStretch()
         action_buttons.addWidget(self.btn_save)
         action_buttons.addWidget(self.pdfButton)
-        main_layout.addLayout(action_buttons)
+        footer_layout.addLayout(action_buttons)
+        main_layout.addWidget(footer_panel)
 
         self.lookupButton.clicked.connect(self.refresh_customer_lookup)
         self.lookupEdit.returnPressed.connect(self.refresh_customer_lookup)
@@ -189,8 +355,78 @@ class MainWindow(QMainWindow):
 
         self.materialsTable.keyPressEvent = lambda event: self.table_key_press(event, self.materialsTable)
         self.worksTable.keyPressEvent = lambda event: self.table_key_press(event, self.worksTable)
+        self.materialsTable.itemDoubleClicked.connect(lambda _item: self.edit_selected_item(self.materialsTable))
+        self.worksTable.itemDoubleClicked.connect(lambda _item: self.edit_selected_item(self.worksTable))
 
         self.refresh_customer_lookup()
+        self.calculate_totals()
+
+    def create_discount_controls(self, label_text):
+        layout = QHBoxLayout()
+        layout.setSpacing(10)
+
+        label = QLabel(label_text)
+        set_variant(label, "muted")
+
+        type_combo = QComboBox()
+        type_combo.addItem("Без знижки", DISCOUNT_NONE)
+        type_combo.addItem("Відсоток", DISCOUNT_PERCENT)
+        type_combo.addItem("Сума, грн", DISCOUNT_AMOUNT)
+        type_combo.setMinimumWidth(135)
+
+        value_spin = QDoubleSpinBox()
+        value_spin.setDecimals(2)
+        value_spin.setMaximum(1000000)
+        value_spin.setMinimumWidth(130)
+
+        type_combo.currentIndexChanged.connect(
+            lambda _index, combo=type_combo, spin=value_spin: self.on_discount_type_changed(combo, spin)
+        )
+        value_spin.valueChanged.connect(
+            lambda _value: self.calculate_totals() if hasattr(self, "totalLabel") else None
+        )
+
+        layout.addWidget(label)
+        layout.addWidget(type_combo)
+        layout.addWidget(value_spin)
+        layout.addStretch()
+
+        self.on_discount_type_changed(type_combo, value_spin)
+        return layout, type_combo, value_spin
+
+    def on_discount_type_changed(self, combo: QComboBox, spin: QDoubleSpinBox):
+        discount_type = combo.currentData()
+        enabled = discount_type != DISCOUNT_NONE
+        spin.setEnabled(enabled)
+        if discount_type == DISCOUNT_PERCENT:
+            spin.setMaximum(100)
+            spin.setSuffix(" %")
+        else:
+            spin.setMaximum(1000000)
+            spin.setSuffix(" грн")
+        if not enabled:
+            spin.setValue(0)
+        if hasattr(self, "totalLabel"):
+            self.calculate_totals()
+
+    def get_discount_control_data(self, combo: QComboBox, spin: QDoubleSpinBox):
+        discount_type = combo.currentData()
+        return {
+            "discount_type": discount_type,
+            "discount_value": spin.value() if discount_type != DISCOUNT_NONE else 0.0,
+        }
+
+    def set_discount_control_data(self, combo: QComboBox, spin: QDoubleSpinBox, discount_type, discount_value):
+        discount_type = normalize_discount_type(discount_type)
+        index = combo.findData(discount_type)
+        combo.setCurrentIndex(index if index >= 0 else 0)
+        spin.setValue(float(discount_value or 0))
+        self.on_discount_type_changed(combo, spin)
+
+    def reset_discount_controls(self):
+        self.set_discount_control_data(self.materialsDiscountTypeCombo, self.materialsDiscountValueSpin, DISCOUNT_NONE, 0)
+        self.set_discount_control_data(self.worksDiscountTypeCombo, self.worksDiscountValueSpin, DISCOUNT_NONE, 0)
+        self.set_discount_control_data(self.invoiceDiscountTypeCombo, self.invoiceDiscountValueSpin, DISCOUNT_NONE, 0)
 
     def refresh_customer_lookup(self, _text=None):
         query = self.lookupEdit.text().strip()
@@ -257,6 +493,59 @@ class MainWindow(QMainWindow):
         else:
             self.selectedCustomerLabel.setText("Новий клієнт / автомобіль")
 
+    def _table_item_data(self, table: QTableWidget, row: int) -> dict:
+        name_item = table.item(row, 0)
+        if name_item:
+            data = name_item.data(Qt.ItemDataRole.UserRole)
+            if isinstance(data, dict):
+                return dict(data)
+
+        return prepare_item({
+            "name": name_item.text() if name_item else "",
+            "qty": table.item(row, 1).text() if table.item(row, 1) else 0,
+            "price": table.item(row, 2).text() if table.item(row, 2) else 0,
+            "discount_type": DISCOUNT_NONE,
+            "discount_value": 0,
+        })
+
+    def _set_table_row(self, table: QTableWidget, row: int, item_data: dict):
+        item = prepare_item(item_data)
+        values = [
+            str(item.get("name", "")),
+            f"{item['qty']:g}",
+            f"{item['price']:.2f}",
+            format_discount(item.get("discount_type"), item.get("discount_value")),
+            f"{item['sum']:.2f}",
+        ]
+
+        for column, value in enumerate(values):
+            table_item = QTableWidgetItem(value)
+            if column in (1, 2, 3, 4):
+                table_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            if column == 0:
+                table_item.setData(Qt.ItemDataRole.UserRole, item)
+            table.setItem(row, column, table_item)
+
+    def _add_table_item(self, table: QTableWidget, item_data: dict):
+        row = table.rowCount()
+        table.insertRow(row)
+        self._set_table_row(table, row, item_data)
+        self.calculate_totals()
+
+    def _collect_table_items(self, table: QTableWidget) -> list[dict]:
+        return [self._table_item_data(table, row) for row in range(table.rowCount())]
+
+    def edit_selected_item(self, table: QTableWidget):
+        row = table.currentRow()
+        if row < 0:
+            return
+
+        title = "Матеріал" if table is self.materialsTable else "Послуга"
+        dialog = ItemDialog(title, self._table_item_data(table, row))
+        if dialog.exec():
+            self._set_table_row(table, row, dialog.get_data())
+            self.calculate_totals()
+
     def collect_form_data(self):
         vehicle = {
             "date": self.dateEdit.date().toString("dd.MM.yyyy"),
@@ -269,23 +558,28 @@ class MainWindow(QMainWindow):
             "mileage": self.mileageEdit.text().strip(),
             "client_id": self.current_client_id,
             "vehicle_id": self.current_vehicle_id,
+            "materials_discount_type": self.materialsDiscountTypeCombo.currentData(),
+            "materials_discount_value": (
+                self.materialsDiscountValueSpin.value()
+                if self.materialsDiscountTypeCombo.currentData() != DISCOUNT_NONE
+                else 0.0
+            ),
+            "works_discount_type": self.worksDiscountTypeCombo.currentData(),
+            "works_discount_value": (
+                self.worksDiscountValueSpin.value()
+                if self.worksDiscountTypeCombo.currentData() != DISCOUNT_NONE
+                else 0.0
+            ),
+            "invoice_discount_type": self.invoiceDiscountTypeCombo.currentData(),
+            "invoice_discount_value": (
+                self.invoiceDiscountValueSpin.value()
+                if self.invoiceDiscountTypeCombo.currentData() != DISCOUNT_NONE
+                else 0.0
+            ),
         }
 
-        materials = []
-        for row in range(self.materialsTable.rowCount()):
-            materials.append({
-                "name": self.materialsTable.item(row, 0).text(),
-                "qty": float(self.materialsTable.item(row, 1).text()),
-                "price": float(self.materialsTable.item(row, 2).text()),
-            })
-
-        works = []
-        for row in range(self.worksTable.rowCount()):
-            works.append({
-                "name": self.worksTable.item(row, 0).text(),
-                "qty": float(self.worksTable.item(row, 1).text()),
-                "price": float(self.worksTable.item(row, 2).text()),
-            })
+        materials = self._collect_table_items(self.materialsTable)
+        works = self._collect_table_items(self.worksTable)
 
         return vehicle, materials, works
 
@@ -306,6 +600,7 @@ class MainWindow(QMainWindow):
         self.dateEdit.setDate(QDate.currentDate())
         self.materialsTable.setRowCount(0)
         self.worksTable.setRowCount(0)
+        self.reset_discount_controls()
 
         self.calculate_totals()
         self.update_customer_label()
@@ -359,23 +654,35 @@ class MainWindow(QMainWindow):
         self.vinEdit.setText(vehicle.get("vin") or "")
         self.numberEdit.setText(vehicle.get("number") or "")
         self.mileageEdit.setText(vehicle.get("mileage") or "")
+        self.set_discount_control_data(
+            self.materialsDiscountTypeCombo,
+            self.materialsDiscountValueSpin,
+            vehicle.get("materials_discount_type"),
+            vehicle.get("materials_discount_value"),
+        )
+        self.set_discount_control_data(
+            self.worksDiscountTypeCombo,
+            self.worksDiscountValueSpin,
+            vehicle.get("works_discount_type"),
+            vehicle.get("works_discount_value"),
+        )
+        self.set_discount_control_data(
+            self.invoiceDiscountTypeCombo,
+            self.invoiceDiscountValueSpin,
+            vehicle.get("invoice_discount_type"),
+            vehicle.get("invoice_discount_value"),
+        )
         self._loading_customer = False
 
         self.materialsTable.setRowCount(0)
         for row, item in enumerate(materials):
             self.materialsTable.insertRow(row)
-            self.materialsTable.setItem(row, 0, QTableWidgetItem(item["name"]))
-            self.materialsTable.setItem(row, 1, QTableWidgetItem(str(item["qty"])))
-            self.materialsTable.setItem(row, 2, QTableWidgetItem(f"{item['price']:.2f}"))
-            self.materialsTable.setItem(row, 3, QTableWidgetItem(f"{item['sum']:.2f}"))
+            self._set_table_row(self.materialsTable, row, item)
 
         self.worksTable.setRowCount(0)
         for row, item in enumerate(works):
             self.worksTable.insertRow(row)
-            self.worksTable.setItem(row, 0, QTableWidgetItem(item["name"]))
-            self.worksTable.setItem(row, 1, QTableWidgetItem(str(item["qty"])))
-            self.worksTable.setItem(row, 2, QTableWidgetItem(f"{item['price']:.2f}"))
-            self.worksTable.setItem(row, 3, QTableWidgetItem(f"{item['sum']:.2f}"))
+            self._set_table_row(self.worksTable, row, item)
 
         self.calculate_totals()
         self.update_customer_label()
@@ -386,7 +693,8 @@ class MainWindow(QMainWindow):
         header.setSectionResizeMode(0, QHeaderView.Stretch)
         header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(3, QHeaderView.Stretch)
+        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(4, QHeaderView.ResizeToContents)
 
     def get_short_fio(self, full_name: str) -> str:
         parts = full_name.strip().split()
@@ -402,25 +710,25 @@ class MainWindow(QMainWindow):
         return re.sub(r'[\\/*?:"<>|]', "", filename)
 
     def calculate_totals(self):
-        materials_sum = 0.0
-        for row in range(self.materialsTable.rowCount()):
-            try:
-                materials_sum += float(self.materialsTable.item(row, 3).text())
-            except (ValueError, AttributeError):
-                continue
-
-        works_sum = 0.0
-        for row in range(self.worksTable.rowCount()):
-            try:
-                works_sum += float(self.worksTable.item(row, 3).text())
-            except (ValueError, AttributeError):
-                continue
-
-        self.materialsTotal.setText(f"Матеріали: <b>{materials_sum:.2f}</b> грн")
-        self.worksTotal.setText(f"Послуги: <b>{works_sum:.2f}</b> грн")
-        self.totalLabel.setText(
-            f"<b>РАЗОМ ДО ОПЛАТИ: <font color='#2b4c7e'>{materials_sum + works_sum:.2f}</font> грн</b>"
+        vehicle = {
+            "materials_discount_type": self.materialsDiscountTypeCombo.currentData(),
+            "materials_discount_value": self.materialsDiscountValueSpin.value(),
+            "works_discount_type": self.worksDiscountTypeCombo.currentData(),
+            "works_discount_value": self.worksDiscountValueSpin.value(),
+            "invoice_discount_type": self.invoiceDiscountTypeCombo.currentData(),
+            "invoice_discount_value": self.invoiceDiscountValueSpin.value(),
+        }
+        totals = calculate_invoice_totals(
+            vehicle,
+            self._collect_table_items(self.materialsTable),
+            self._collect_table_items(self.worksTable),
         )
+
+        self.materialsTotal.setText(f"Матеріали: {totals['materials_total']:.2f} грн")
+        self.worksTotal.setText(f"Послуги: {totals['works_total']:.2f} грн")
+        discount_prefix = "-" if totals["discount_total"] > 0 else ""
+        self.discountTotal.setText(f"Знижки: {discount_prefix}{totals['discount_total']:.2f} грн")
+        self.totalLabel.setText(f"РАЗОМ ДО ОПЛАТИ: {totals['total']:.2f} грн")
 
     def create_pdf(self):
         invoice_id = self.save_to_db()
@@ -447,11 +755,6 @@ class MainWindow(QMainWindow):
         safe_filename = self.clean_filename(raw_filename)
         full_pdf_path = str(target_dir / safe_filename)
 
-        for item in materials:
-            item["sum"] = item["qty"] * item["price"]
-        for item in works:
-            item["sum"] = item["qty"] * item["price"]
-
         try:
             export_invoice(full_pdf_path, vehicle, materials, works)
             os.startfile(str(target_dir))
@@ -466,30 +769,12 @@ class MainWindow(QMainWindow):
     def add_material(self):
         dialog = ItemDialog("Матеріал")
         if dialog.exec():
-            name, qty, price = dialog.get_data()
-            row = self.materialsTable.rowCount()
-            self.materialsTable.insertRow(row)
-
-            self.materialsTable.setItem(row, 0, QTableWidgetItem(name))
-            self.materialsTable.setItem(row, 1, QTableWidgetItem(str(qty)))
-            self.materialsTable.setItem(row, 2, QTableWidgetItem(f"{price:.2f}"))
-            self.materialsTable.setItem(row, 3, QTableWidgetItem(f"{qty * price:.2f}"))
-
-            self.calculate_totals()
+            self._add_table_item(self.materialsTable, dialog.get_data())
 
     def add_work(self):
         dialog = ItemDialog("Послуга")
         if dialog.exec():
-            name, qty, price = dialog.get_data()
-            row = self.worksTable.rowCount()
-            self.worksTable.insertRow(row)
-
-            self.worksTable.setItem(row, 0, QTableWidgetItem(name))
-            self.worksTable.setItem(row, 1, QTableWidgetItem(str(qty)))
-            self.worksTable.setItem(row, 2, QTableWidgetItem(f"{price:.2f}"))
-            self.worksTable.setItem(row, 3, QTableWidgetItem(f"{qty * price:.2f}"))
-
-            self.calculate_totals()
+            self._add_table_item(self.worksTable, dialog.get_data())
 
     def table_key_press(self, event, table: QTableWidget):
         if event.key() == Qt.Key_Delete:

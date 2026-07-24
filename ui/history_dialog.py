@@ -3,29 +3,41 @@ from PySide6.QtWidgets import (
     QDialog,
     QHBoxLayout,
     QHeaderView,
+    QLabel,
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QStyle,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
 )
 
 from database.db_manager import delete_invoice, get_all_invoices
+from ui.theme import polish_table, set_button_icon, set_button_role, set_variant
 
 
 class HistoryDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Журнал актів")
-        self.resize(940, 500)
+        self.resize(1020, 580)
 
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(14)
+
+        title_label = QLabel("Журнал актів")
+        set_variant(title_label, "section")
+        layout.addWidget(title_label)
 
         search_layout = QHBoxLayout()
+        search_layout.setSpacing(10)
         self.searchEdit = QLineEdit()
         self.searchEdit.setPlaceholderText("Пошук: клієнт, телефон, авто, VIN, держномер або дата")
         self.btn_clear_search = QPushButton("Очистити")
+        set_button_role(self.btn_clear_search, "subtle")
+        set_button_icon(self.btn_clear_search, QStyle.StandardPixmap.SP_DialogResetButton)
         search_layout.addWidget(self.searchEdit, 1)
         search_layout.addWidget(self.btn_clear_search)
         layout.addLayout(search_layout)
@@ -44,14 +56,21 @@ class HistoryDialog(QDialog):
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
-        self.table.verticalHeader().setVisible(False)
+        polish_table(self.table)
         self.setup_headers()
         layout.addWidget(self.table)
 
         btn_layout = QHBoxLayout()
-        self.btn_edit = QPushButton("✏️ Редагувати")
-        self.btn_delete = QPushButton("❌ Видалити")
+        btn_layout.setSpacing(10)
+        self.btn_edit = QPushButton("Редагувати")
+        self.btn_delete = QPushButton("Видалити")
         self.btn_close = QPushButton("Закрити")
+        set_button_role(self.btn_edit, "primary")
+        set_button_role(self.btn_delete, "danger")
+        set_button_role(self.btn_close, "subtle")
+        set_button_icon(self.btn_edit, QStyle.StandardPixmap.SP_DialogOpenButton)
+        set_button_icon(self.btn_delete, QStyle.StandardPixmap.SP_TrashIcon)
+        set_button_icon(self.btn_close, QStyle.StandardPixmap.SP_DialogCloseButton)
 
         btn_layout.addWidget(self.btn_edit)
         btn_layout.addWidget(self.btn_delete)

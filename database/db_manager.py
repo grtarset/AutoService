@@ -4,6 +4,14 @@ import sqlite3
 from datetime import datetime
 from pathlib import Path
 
+from models.discounts import (
+    DISCOUNT_NONE,
+    calculate_invoice_totals,
+    normalize_discount_type,
+    normalize_discount_value,
+    prepare_item,
+)
+
 
 APP_NAME = "AutoService"
 LEGACY_DB_PATH = Path(__file__).resolve().with_name("autoservice.db")
@@ -55,6 +63,13 @@ def _now() -> str:
 
 def _clean(value) -> str:
     return str(value or "").strip()
+
+
+def _discount_payload(discount_type, discount_value) -> tuple[str, float]:
+    discount_type = normalize_discount_type(discount_type)
+    if discount_type == DISCOUNT_NONE:
+        return DISCOUNT_NONE, 0.0
+    return discount_type, normalize_discount_value(discount_value)
 
 
 def _normalize_name(value: str) -> str:
@@ -134,6 +149,12 @@ def init_db():
                 mileage TEXT,
                 client_id INTEGER,
                 vehicle_id INTEGER,
+                materials_discount_type TEXT DEFAULT 'none',
+                materials_discount_value REAL DEFAULT 0,
+                works_discount_type TEXT DEFAULT 'none',
+                works_discount_value REAL DEFAULT 0,
+                invoice_discount_type TEXT DEFAULT 'none',
+                invoice_discount_value REAL DEFAULT 0,
                 FOREIGN KEY(client_id) REFERENCES clients(id) ON DELETE SET NULL,
                 FOREIGN KEY(vehicle_id) REFERENCES vehicles(id) ON DELETE SET NULL
             )
@@ -146,6 +167,8 @@ def init_db():
                 name TEXT,
                 qty REAL,
                 price REAL,
+                discount_type TEXT DEFAULT 'none',
+                discount_value REAL DEFAULT 0,
                 FOREIGN KEY(invoice_id) REFERENCES invoices(id) ON DELETE CASCADE
             )
         """)
@@ -157,6 +180,8 @@ def init_db():
                 name TEXT,
                 qty REAL,
                 price REAL,
+                discount_type TEXT DEFAULT 'none',
+                discount_value REAL DEFAULT 0,
                 FOREIGN KEY(invoice_id) REFERENCES invoices(id) ON DELETE CASCADE
             )
         """)
@@ -171,6 +196,16 @@ def init_db():
         _add_column_if_missing(cursor, "invoices", "phone", "TEXT DEFAULT ''")
         _add_column_if_missing(cursor, "invoices", "client_id", "INTEGER")
         _add_column_if_missing(cursor, "invoices", "vehicle_id", "INTEGER")
+        _add_column_if_missing(cursor, "invoices", "materials_discount_type", "TEXT DEFAULT 'none'")
+        _add_column_if_missing(cursor, "invoices", "materials_discount_value", "REAL DEFAULT 0")
+        _add_column_if_missing(cursor, "invoices", "works_discount_type", "TEXT DEFAULT 'none'")
+        _add_column_if_missing(cursor, "invoices", "works_discount_value", "REAL DEFAULT 0")
+        _add_column_if_missing(cursor, "invoices", "invoice_discount_type", "TEXT DEFAULT 'none'")
+        _add_column_if_missing(cursor, "invoices", "invoice_discount_value", "REAL DEFAULT 0")
+        _add_column_if_missing(cursor, "invoice_materials", "discount_type", "TEXT DEFAULT 'none'")
+        _add_column_if_missing(cursor, "invoice_materials", "discount_value", "REAL DEFAULT 0")
+        _add_column_if_missing(cursor, "invoice_services", "discount_type", "TEXT DEFAULT 'none'")
+        _add_column_if_missing(cursor, "invoice_services", "discount_value", "REAL DEFAULT 0")
 
         now = _now()
         cursor.execute("UPDATE clients SET created_at = COALESCE(created_at, ?), updated_at = COALESCE(updated_at, ?)", (now, now))
@@ -645,6 +680,18 @@ def save_invoice(vehicle, materials, works, invoice_id=None):
             vehicle.get("mileage"),
         )
         primary_phone = _clean(vehicle.get("phone")) or _get_primary_phone(cursor, client_id)
+        materials_discount_type, materials_discount_value = _discount_payload(
+            vehicle.get("materials_discount_type"),
+            vehicle.get("materials_discount_value"),
+        )
+        works_discount_type, works_discount_value = _discount_payload(
+            vehicle.get("works_discount_type"),
+            vehicle.get("works_discount_value"),
+        )
+        invoice_discount_type, invoice_discount_value = _discount_payload(
+            vehicle.get("invoice_discount_type"),
+            vehicle.get("invoice_discount_value"),
+        )
 
         payload = (
             vehicle.get("date"),
@@ -657,6 +704,12 @@ def save_invoice(vehicle, materials, works, invoice_id=None):
             _clean(vehicle.get("mileage")),
             client_id,
             vehicle_id,
+            materials_discount_type,
+            materials_discount_value,
+            works_discount_type,
+            works_discount_value,
+            invoice_discount_type,
+            invoice_discount_value,
         )
 
         if invoice_id:
@@ -664,7 +717,10 @@ def save_invoice(vehicle, materials, works, invoice_id=None):
                 """
                 UPDATE invoices
                 SET date = ?, client = ?, phone = ?, brand = ?, model = ?, vin = ?,
-                    number = ?, mileage = ?, client_id = ?, vehicle_id = ?
+                    number = ?, mileage = ?, client_id = ?, vehicle_id = ?,
+                    materials_discount_type = ?, materials_discount_value = ?,
+                    works_discount_type = ?, works_discount_value = ?,
+                    invoice_discount_type = ?, invoice_discount_value = ?
                 WHERE id = ?
                 """,
                 (*payload, invoice_id),
@@ -678,33 +734,74 @@ def save_invoice(vehicle, materials, works, invoice_id=None):
             cursor.execute(
                 """
                 INSERT INTO invoices
-                    (date, client, phone, brand, model, vin, number, mileage, client_id, vehicle_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (
+                        date, client, phone, brand, model, vin, number, mileage,
+                        client_id, vehicle_id, materials_discount_type, materials_discount_value,
+                        works_discount_type, works_discount_value, invoice_discount_type, invoice_discount_value
+                    )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 payload,
             )
             invoice_id = cursor.lastrowid
 
         for item in materials:
+            discount_type, discount_value = _discount_payload(
+                item.get("discount_type"),
+                item.get("discount_value"),
+            )
             cursor.execute(
                 """
-                INSERT INTO invoice_materials (invoice_id, name, qty, price)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO invoice_materials (invoice_id, name, qty, price, discount_type, discount_value)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (invoice_id, _clean(item.get("name")), item.get("qty", 0), item.get("price", 0)),
+                (
+                    invoice_id,
+                    _clean(item.get("name")),
+                    item.get("qty", 0),
+                    item.get("price", 0),
+                    discount_type,
+                    discount_value,
+                ),
             )
 
         for item in works:
+            discount_type, discount_value = _discount_payload(
+                item.get("discount_type"),
+                item.get("discount_value"),
+            )
             cursor.execute(
                 """
-                INSERT INTO invoice_services (invoice_id, name, qty, price)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO invoice_services (invoice_id, name, qty, price, discount_type, discount_value)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (invoice_id, _clean(item.get("name")), item.get("qty", 0), item.get("price", 0)),
+                (
+                    invoice_id,
+                    _clean(item.get("name")),
+                    item.get("qty", 0),
+                    item.get("price", 0),
+                    discount_type,
+                    discount_value,
+                ),
             )
 
         conn.commit()
         return invoice_id
+
+
+def _get_invoice_items(cursor, table_name: str, invoice_id):
+    if table_name not in {"invoice_materials", "invoice_services"}:
+        raise ValueError("Невідома таблиця позицій акту")
+
+    cursor.execute(
+        f"""
+        SELECT name, qty, price, discount_type, discount_value
+        FROM {table_name}
+        WHERE invoice_id = ?
+        """,
+        (invoice_id,),
+    )
+    return [prepare_item(dict(item)) for item in cursor.fetchall()]
 
 
 def get_all_invoices(search_text: str = ""):
@@ -730,6 +827,7 @@ def get_all_invoices(search_text: str = ""):
         params = [query] * 9
 
     with get_connection() as conn:
+        conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
         cursor.execute(
             f"""
@@ -742,25 +840,38 @@ def get_all_invoices(search_text: str = ""):
                 i.model,
                 i.number,
                 i.vin,
-                COALESCE(materials.total, 0) + COALESCE(services.total, 0) AS total
+                i.materials_discount_type,
+                i.materials_discount_value,
+                i.works_discount_type,
+                i.works_discount_value,
+                i.invoice_discount_type,
+                i.invoice_discount_value
             FROM invoices i
             LEFT JOIN clients c ON c.id = i.client_id
-            LEFT JOIN (
-                SELECT invoice_id, SUM(qty * price) AS total
-                FROM invoice_materials
-                GROUP BY invoice_id
-            ) materials ON materials.invoice_id = i.id
-            LEFT JOIN (
-                SELECT invoice_id, SUM(qty * price) AS total
-                FROM invoice_services
-                GROUP BY invoice_id
-            ) services ON services.invoice_id = i.id
             {where}
             ORDER BY i.id DESC
             """,
             params,
         )
-        return cursor.fetchall()
+        rows = cursor.fetchall()
+        invoices = []
+        for row in rows:
+            vehicle = dict(row)
+            materials = _get_invoice_items(cursor, "invoice_materials", row["id"])
+            works = _get_invoice_items(cursor, "invoice_services", row["id"])
+            total = calculate_invoice_totals(vehicle, materials, works)["total"]
+            invoices.append((
+                row["id"],
+                row["date"],
+                row["client"],
+                row["phone"],
+                row["brand"],
+                row["model"],
+                row["number"],
+                row["vin"],
+                total,
+            ))
+        return invoices
 
 
 def search_customer_records(search_text: str = "", limit: int = 25):
@@ -1001,15 +1112,8 @@ def get_invoice_by_id(invoice_id):
         vehicle = dict(row)
         vehicle["phone"] = vehicle.pop("resolved_phone", "") or vehicle.get("phone", "")
 
-        cursor.execute("SELECT name, qty, price FROM invoice_materials WHERE invoice_id = ?", (invoice_id,))
-        materials = [dict(item) for item in cursor.fetchall()]
-        for item in materials:
-            item["sum"] = item["qty"] * item["price"]
-
-        cursor.execute("SELECT name, qty, price FROM invoice_services WHERE invoice_id = ?", (invoice_id,))
-        works = [dict(item) for item in cursor.fetchall()]
-        for item in works:
-            item["sum"] = item["qty"] * item["price"]
+        materials = _get_invoice_items(cursor, "invoice_materials", invoice_id)
+        works = _get_invoice_items(cursor, "invoice_services", invoice_id)
 
         return vehicle, materials, works
 

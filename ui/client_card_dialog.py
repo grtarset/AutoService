@@ -9,14 +9,16 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMessageBox,
-    QPushButton,
     QPlainTextEdit,
+    QPushButton,
+    QStyle,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
 )
 
 from database.db_manager import get_client_card, save_client_card
+from ui.theme import polish_table, set_button_icon, set_button_role, set_variant
 
 
 class ClientCardDialog(QDialog):
@@ -26,24 +28,35 @@ class ClientCardDialog(QDialog):
         self._updating_primary = False
 
         self.setWindowTitle("Картка клієнта")
-        self.resize(860, 640)
+        self.resize(940, 700)
 
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(14)
+
+        title_label = QLabel("Картка клієнта")
+        set_variant(title_label, "section")
+        layout.addWidget(title_label)
 
         form_layout = QFormLayout()
+        form_layout.setHorizontalSpacing(12)
+        form_layout.setVerticalSpacing(10)
+        form_layout.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
         self.nameEdit = QLineEdit()
         self.notesEdit = QPlainTextEdit()
-        self.notesEdit.setFixedHeight(70)
+        self.notesEdit.setFixedHeight(84)
         form_layout.addRow("ПІБ / Назва:", self.nameEdit)
         form_layout.addRow("Примітки:", self.notesEdit)
         layout.addLayout(form_layout)
 
-        layout.addWidget(QLabel("<b>Телефони</b>"))
+        phones_label = QLabel("Телефони")
+        set_variant(phones_label, "section")
+        layout.addWidget(phones_label)
         self.phonesTable = QTableWidget(0, 4)
         self.phonesTable.setHorizontalHeaderLabels(["ID", "Тип", "Телефон", "Основний"])
         self.phonesTable.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.phonesTable.setSelectionMode(QAbstractItemView.SingleSelection)
-        self.phonesTable.verticalHeader().setVisible(False)
+        polish_table(self.phonesTable)
         self.phonesTable.setColumnHidden(0, True)
         self.phonesTable.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
         self.phonesTable.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
@@ -52,14 +65,21 @@ class ClientCardDialog(QDialog):
         layout.addWidget(self.phonesTable)
 
         phone_buttons = QHBoxLayout()
+        phone_buttons.setSpacing(10)
         self.addPhoneButton = QPushButton("Додати телефон")
         self.deletePhoneButton = QPushButton("Видалити телефон")
+        set_button_role(self.addPhoneButton, "subtle")
+        set_button_role(self.deletePhoneButton, "danger")
+        set_button_icon(self.addPhoneButton, QStyle.StandardPixmap.SP_FileDialogNewFolder)
+        set_button_icon(self.deletePhoneButton, QStyle.StandardPixmap.SP_TrashIcon)
         phone_buttons.addWidget(self.addPhoneButton)
         phone_buttons.addWidget(self.deletePhoneButton)
         phone_buttons.addStretch()
         layout.addLayout(phone_buttons)
 
-        layout.addWidget(QLabel("<b>Автомобілі</b>"))
+        vehicles_label = QLabel("Автомобілі")
+        set_variant(vehicles_label, "section")
+        layout.addWidget(vehicles_label)
         self.vehiclesTable = QTableWidget(0, 7)
         self.vehiclesTable.setHorizontalHeaderLabels([
             "ID",
@@ -72,7 +92,7 @@ class ClientCardDialog(QDialog):
         ])
         self.vehiclesTable.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.vehiclesTable.setSelectionMode(QAbstractItemView.SingleSelection)
-        self.vehiclesTable.verticalHeader().setVisible(False)
+        polish_table(self.vehiclesTable)
         self.vehiclesTable.setColumnHidden(0, True)
         self.vehiclesTable.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
         self.vehiclesTable.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
@@ -83,14 +103,29 @@ class ClientCardDialog(QDialog):
         layout.addWidget(self.vehiclesTable)
 
         vehicle_buttons = QHBoxLayout()
+        vehicle_buttons.setSpacing(10)
         self.addVehicleButton = QPushButton("Додати автомобіль")
         self.deleteVehicleButton = QPushButton("Видалити автомобіль")
+        set_button_role(self.addVehicleButton, "subtle")
+        set_button_role(self.deleteVehicleButton, "danger")
+        set_button_icon(self.addVehicleButton, QStyle.StandardPixmap.SP_FileDialogNewFolder)
+        set_button_icon(self.deleteVehicleButton, QStyle.StandardPixmap.SP_TrashIcon)
         vehicle_buttons.addWidget(self.addVehicleButton)
         vehicle_buttons.addWidget(self.deleteVehicleButton)
         vehicle_buttons.addStretch()
         layout.addLayout(vehicle_buttons)
 
         self.buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        save_button = self.buttons.button(QDialogButtonBox.Save)
+        cancel_button = self.buttons.button(QDialogButtonBox.Cancel)
+        if save_button:
+            save_button.setText("Зберегти")
+            set_button_role(save_button, "success")
+            set_button_icon(save_button, QStyle.StandardPixmap.SP_DialogSaveButton)
+        if cancel_button:
+            cancel_button.setText("Скасувати")
+            set_button_role(cancel_button, "subtle")
+            set_button_icon(cancel_button, QStyle.StandardPixmap.SP_DialogCancelButton)
         layout.addWidget(self.buttons)
 
         self.addPhoneButton.clicked.connect(self.add_phone_row)
